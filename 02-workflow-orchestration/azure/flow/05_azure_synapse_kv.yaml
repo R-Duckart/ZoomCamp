@@ -1,0 +1,24 @@
+id: 05_azure_synapse_kv
+namespace: zoomcamp
+description: |
+  Azure configuration values used by the Azure-based Kestra flows.
+  Secrets such as connection strings, SAS tokens, and passwords must stay in Kestra secrets.
+
+tasks:
+  - id: azure_synapse_sql_endpoint
+    type: io.kestra.plugin.core.kv.Set
+    key: AZURE_SYNAPSE_SQL_ENDPOINT
+    kvType: STRING
+    value: zoomcamp-ondemand.sql.azuresynapse.net
+
+  - id: azure_synapse_database
+    type: io.kestra.plugin.core.kv.Set
+    key: AZURE_SYNAPSE_DATABASE
+    kvType: STRING
+    value: taxi-rides-ny
+
+  - id: azure_synapse_schema
+    type: io.kestra.plugin.core.kv.Set
+    key: AZURE_SYNAPSE_SCHEMA
+    kvType: STRING
+    value: taxi

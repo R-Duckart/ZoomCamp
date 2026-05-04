@@ -1,0 +1,428 @@
+﻿id: 04_azure_taxi_json
+namespace: zoomcamp
+description: |
+  Monthly NYC taxi ingestion with direct load to Azure SQL (no SQL staging table).
+  CSV is downloaded locally, converted to JSON, uploaded to Azure Blob,
+  then inserted into Azure SQL final tables using OPENJSON with generated MD5 ID.
+
+  This code doesn't work because Azure SQL doesn't support BULK access to external data sources,
+  They don't support OPENROWSET with external data sources either, so the JSON file must be loaded into a staging table first.
+  The next flow (12_azure_bigdata) implements the correct pattern for Azure SQL bulk ingestion, but with Parquet files instead of JSON.
+  The pattern in this flow is left here for educational purposes to show the limitations of Azure SQL and why a staging table is needed.
+  For a JSON file ingestion without staging table, you would need to use Azure Synapse or Azure Databricks instead, which do support direct OPENROWSET from external data sources.
+
+inputs:
+  - id: taxi
+    type: SELECT
+    displayName: Select taxi type
+    values: [yellow, green]
+    defaults: green
+
+  - id: year
+    type: SELECT
+    displayName: Select year
+    values: ["2019", "2020"]
+    defaults: "2020"
+    allowCustomValue: true
+
+  - id: month
+    type: SELECT
+    displayName: Select month
+    values: ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
+    defaults: "04"
+
+variables:
+  file: "{{inputs.taxi}}_tripdata_{{inputs.year}}-{{inputs.month}}.csv"
+  json_file: "{{inputs.taxi}}_tripdata_{{inputs.year}}-{{inputs.month}}.json"
+  json_blob_name: "json/taxi/{{inputs.taxi}}/{{inputs.year}}/{{inputs.month}}/{{vars.json_file}}"
+
+tasks:
+  - id: set_label
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      file: "{{render(vars.file)}}"
+      taxi: "{{inputs.taxi}}"
+      year: "{{inputs.year}}"
+      month: "{{inputs.month}}"
+      target: azure-json-sql
+
+  - id: extract_csv
+    type: io.kestra.plugin.scripts.shell.Commands
+    outputFiles:
+      - "*.csv"
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - curl -sSL https://github.com/DataTalksClub/nyc-tlc-data/releases/download/{{inputs.taxi}}/{{render(vars.file)}}.gz | gunzip > {{render(vars.file)}}
+
+  - id: convert_csv_to_json
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    containerImage: python:3.11-slim
+    inputFiles:
+      source_csv: "{{outputs.extract_csv.outputFiles[inputs.taxi ~ '_tripdata_' ~ inputs.year ~ '-' ~ inputs.month ~ '.csv']}}"
+    outputFiles:
+      - "*.json"
+    script: |
+      import csv
+      import json
+
+      output_path = "{{render(vars.json_file)}}"
+
+      with open("source_csv", "r", encoding="utf-8", newline="") as src, open(output_path, "w", encoding="utf-8") as dst:
+          reader = csv.DictReader(src)
+          dst.write("[")
+          first = True
+          for row in reader:
+              if not first:
+                  dst.write(",")
+              json.dump(row, dst, ensure_ascii=False)
+              first = False
+          dst.write("]")
+
+  - id: upload_json_for_sql
+    type: io.kestra.plugin.azure.storage.blob.Upload
+    from: "{{outputs.convert_csv_to_json.outputFiles[render(vars.json_file)]}}"
+    name: "{{render(vars.json_blob_name)}}"
+
+  - id: azure_credential
+    type: io.kestra.plugin.jdbc.sqlserver.Queries
+    sql: |
+      IF NOT EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = '##MS_DatabaseMasterKey##')
+        CREATE MASTER KEY ENCRYPTION BY PASSWORD = '{{secret('AZURE_DB_MASTER_KEY_PASSWORD')}}';
+
+      IF EXISTS (SELECT 1 FROM sys.database_scoped_credentials WHERE name = '{{kv('AZURE_BLOB_CREDENTIAL')}}')
+      BEGIN
+          IF EXISTS (SELECT 1 FROM sys.external_data_sources WHERE name = '{{kv('AZURE_EXTERNAL_DATA_SOURCE')}}')
+            DROP EXTERNAL DATA SOURCE [{{kv('AZURE_EXTERNAL_DATA_SOURCE')}}];
+          
+          ALTER DATABASE SCOPED CREDENTIAL [{{kv('AZURE_BLOB_CREDENTIAL')}}]
+            WITH IDENTITY = 'SHARED ACCESS SIGNATURE',
+            SECRET = '{{secret('AZURE_STORAGE_SAS_TOKEN')}}';
+      END
+      ELSE
+      BEGIN
+        CREATE DATABASE SCOPED CREDENTIAL [{{kv('AZURE_BLOB_CREDENTIAL')}}]
+          WITH IDENTITY = 'SHARED ACCESS SIGNATURE',
+          SECRET = '{{secret('AZURE_STORAGE_SAS_TOKEN')}}';
+      END;
+
+      CREATE EXTERNAL DATA SOURCE [{{kv('AZURE_EXTERNAL_DATA_SOURCE')}}]
+      WITH (
+        LOCATION   = 'https://{{kv('AZURE_STORAGE_ACCOUNT')}}.blob.core.windows.net/{{kv('AZURE_STORAGE_CONTAINER')}}',
+        CREDENTIAL = [{{kv('AZURE_BLOB_CREDENTIAL')}}]
+      );
+
+  - id: validate_json_blob_access
+    type: io.kestra.plugin.jdbc.sqlserver.Query
+    sql: |
+      SELECT TOP 1 DATALENGTH(BulkColumn) AS json_size_bytes
+      FROM OPENROWSET(
+          BULK '{{render(vars.json_blob_name)}}',
+          DATA_SOURCE = '{{kv('AZURE_EXTERNAL_DATA_SOURCE')}}',
+          SINGLE_CLOB
+      ) AS src;
+
+  - id: if_yellow_taxi
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{inputs.taxi == 'yellow'}}"
+    then:
+      - id: create_yellow_table
+        type: io.kestra.plugin.jdbc.sqlserver.Query
+        sql: |
+          IF OBJECT_ID('[{{kv('AZURE_SQL_SCHEMA')}}].[yellow_tripdata]', 'U') IS NULL
+          BEGIN
+              CREATE TABLE [{{kv('AZURE_SQL_SCHEMA')}}].[yellow_tripdata] (
+                  unique_row_id NVARCHAR(64) NOT NULL PRIMARY KEY,
+                  filename NVARCHAR(255) NOT NULL,
+                  VendorID NVARCHAR(50) NULL,
+                  tpep_pickup_datetime DATETIME2 NULL,
+                  tpep_dropoff_datetime DATETIME2 NULL,
+                  passenger_count INT NULL,
+                  trip_distance DECIMAL(18, 3) NULL,
+                  RatecodeID NVARCHAR(50) NULL,
+                  store_and_fwd_flag NVARCHAR(10) NULL,
+                  PULocationID NVARCHAR(50) NULL,
+                  DOLocationID NVARCHAR(50) NULL,
+                  payment_type INT NULL,
+                  fare_amount DECIMAL(18, 2) NULL,
+                  extra DECIMAL(18, 2) NULL,
+                  mta_tax DECIMAL(18, 2) NULL,
+                  tip_amount DECIMAL(18, 2) NULL,
+                  tolls_amount DECIMAL(18, 2) NULL,
+                  improvement_surcharge DECIMAL(18, 2) NULL,
+                  total_amount DECIMAL(18, 2) NULL,
+                  congestion_surcharge DECIMAL(18, 2) NULL
+              );
+          END;
+
+      - id: insert_yellow_tripdata
+        type: io.kestra.plugin.jdbc.sqlserver.Query
+        sql: |
+          MERGE [{{kv('AZURE_SQL_SCHEMA')}}].[yellow_tripdata] AS tgt
+          USING (
+              SELECT
+                  LOWER(CONVERT(NVARCHAR(32), HASHBYTES(
+                    'MD5',
+                    COALESCE(CAST(VendorID AS NVARCHAR(MAX)), '') +
+                    COALESCE(CONVERT(NVARCHAR(33), tpep_pickup_datetime, 126), '') +
+                    COALESCE(CONVERT(NVARCHAR(33), tpep_dropoff_datetime, 126), '') +
+                    COALESCE(PULocationID, '') +
+                    COALESCE(DOLocationID, '') +
+                    COALESCE(CAST(fare_amount AS NVARCHAR(MAX)), '') +
+                    COALESCE(CAST(trip_distance AS NVARCHAR(MAX)), '')
+                  ), 2))                                    AS unique_row_id,
+                  '{{render(vars.file)}}'                   AS filename,
+                  VendorID,
+                  TRY_CAST(tpep_pickup_datetime   AS DATETIME2) AS tpep_pickup_datetime,
+                  TRY_CAST(tpep_dropoff_datetime  AS DATETIME2) AS tpep_dropoff_datetime,
+                  store_and_fwd_flag,
+                  RatecodeID,
+                  PULocationID,
+                  DOLocationID,
+                  TRY_CAST(NULLIF(passenger_count,'')        AS INT)           AS passenger_count,
+                  TRY_CAST(NULLIF(trip_distance,'')          AS DECIMAL(18,3)) AS trip_distance,
+                  TRY_CAST(NULLIF(fare_amount,'')            AS DECIMAL(18,2)) AS fare_amount,
+                  TRY_CAST(NULLIF(extra,'')                  AS DECIMAL(18,2)) AS extra,
+                  TRY_CAST(NULLIF(mta_tax,'')                AS DECIMAL(18,2)) AS mta_tax,
+                  TRY_CAST(NULLIF(tip_amount,'')             AS DECIMAL(18,2)) AS tip_amount,
+                  TRY_CAST(NULLIF(tolls_amount,'')           AS DECIMAL(18,2)) AS tolls_amount,
+                  TRY_CAST(NULLIF(improvement_surcharge,'')  AS DECIMAL(18,2)) AS improvement_surcharge,
+                  TRY_CAST(NULLIF(total_amount,'')           AS DECIMAL(18,2)) AS total_amount,
+                  TRY_CAST(NULLIF(congestion_surcharge,'')   AS DECIMAL(18,2)) AS congestion_surcharge
+              FROM OPENROWSET(
+                  BULK '{{render(vars.json_blob_name)}}',
+                  DATA_SOURCE = '{{kv('AZURE_EXTERNAL_DATA_SOURCE')}}',
+                  SINGLE_CLOB
+              ) AS src
+              CROSS APPLY OPENJSON(src.BulkColumn)
+              WITH (
+                  VendorID              NVARCHAR(50),
+                  tpep_pickup_datetime  NVARCHAR(50),
+                  tpep_dropoff_datetime NVARCHAR(50),
+                  store_and_fwd_flag    NVARCHAR(10),
+                  RatecodeID            NVARCHAR(50),
+                  PULocationID          NVARCHAR(50),
+                  DOLocationID          NVARCHAR(50),
+                  passenger_count       NVARCHAR(50),
+                  trip_distance         NVARCHAR(50),
+                  fare_amount           NVARCHAR(50),
+                  extra                 NVARCHAR(50),
+                  mta_tax               NVARCHAR(50),
+                  tip_amount            NVARCHAR(50),
+                  tolls_amount          NVARCHAR(50),
+                  ehail_fee             NVARCHAR(50),
+                  improvement_surcharge NVARCHAR(50),
+                  total_amount          NVARCHAR(50),
+                  payment_type          NVARCHAR(50),
+                  trip_type             NVARCHAR(50),
+                  congestion_surcharge  NVARCHAR(50)
+              ) AS j
+          ) AS src
+          ON tgt.unique_row_id = src.unique_row_id
+          WHEN MATCHED THEN
+            UPDATE SET
+              filename = src.filename,
+              VendorID = src.VendorID,
+              tpep_pickup_datetime = src.tpep_pickup_datetime,
+              tpep_dropoff_datetime = src.tpep_dropoff_datetime,
+              store_and_fwd_flag = src.store_and_fwd_flag,
+              RatecodeID = src.RatecodeID,
+              PULocationID = src.PULocationID,
+              DOLocationID = src.DOLocationID,
+              passenger_count = src.passenger_count,
+              trip_distance = src.trip_distance,
+              fare_amount = src.fare_amount,
+              extra = src.extra,
+              mta_tax = src.mta_tax,
+              tip_amount = src.tip_amount,
+              tolls_amount = src.tolls_amount,
+              ehail_fee = src.ehail_fee,
+              improvement_surcharge = src.improvement_surcharge,
+              total_amount = src.total_amount,
+              payment_type = src.payment_type,
+              trip_type = src.trip_type,
+              congestion_surcharge = src.congestion_surcharge
+          WHEN NOT MATCHED THEN
+            INSERT (
+              unique_row_id, filename, VendorID, tpep_pickup_datetime, tpep_dropoff_datetime,
+              passenger_count, trip_distance, RatecodeID, store_and_fwd_flag, PULocationID, DOLocationID,
+              payment_type, fare_amount, extra, mta_tax, tip_amount, tolls_amount,
+              ehail_fee, improvement_surcharge, total_amount, congestion_surcharge
+            )
+            VALUES (
+              src.unique_row_id, src.filename, src.VendorID, src.tpep_pickup_datetime, src.tpep_dropoff_datetime,
+              src.passenger_count, src.trip_distance, src.RatecodeID, src.store_and_fwd_flag, src.PULocationID, src.DOLocationID,
+              src.payment_type, src.fare_amount, src.extra, src.mta_tax, src.tip_amount, src.tolls_amount,
+              src.ehail_fee, src.improvement_surcharge, src.total_amount, src.congestion_surcharge
+            );
+
+  - id: if_green_taxi
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{inputs.taxi == 'green'}}"
+    then:
+      - id: create_green_table
+        type: io.kestra.plugin.jdbc.sqlserver.Query
+        sql: |
+          IF OBJECT_ID('[{{kv('AZURE_SQL_SCHEMA')}}].[green_tripdata]', 'U') IS NULL
+          BEGIN
+              CREATE TABLE [{{kv('AZURE_SQL_SCHEMA')}}].[green_tripdata] (
+                  unique_row_id NVARCHAR(32) NOT NULL PRIMARY KEY,
+                  filename NVARCHAR(255) NOT NULL,
+                  VendorID NVARCHAR(50) NULL,
+                  lpep_pickup_datetime DATETIME2 NULL,
+                  lpep_dropoff_datetime DATETIME2 NULL,
+                  store_and_fwd_flag NVARCHAR(10) NULL,
+                  RatecodeID NVARCHAR(50) NULL,
+                  PULocationID NVARCHAR(50) NULL,
+                  DOLocationID NVARCHAR(50) NULL,
+                  passenger_count INT NULL,
+                  trip_distance DECIMAL(18, 3) NULL,
+                  fare_amount DECIMAL(18, 2) NULL,
+                  extra DECIMAL(18, 2) NULL,
+                  mta_tax DECIMAL(18, 2) NULL,
+                  tip_amount DECIMAL(18, 2) NULL,
+                  tolls_amount DECIMAL(18, 2) NULL,
+                  ehail_fee DECIMAL(18, 2) NULL,
+                  improvement_surcharge DECIMAL(18, 2) NULL,
+                  total_amount DECIMAL(18, 2) NULL,
+                  payment_type INT NULL,
+                  trip_type NVARCHAR(50) NULL,
+                  congestion_surcharge DECIMAL(18, 2) NULL
+              );
+          END;
+
+      - id: insert_green_tripdata
+        type: io.kestra.plugin.jdbc.sqlserver.Query
+        sql: |
+          MERGE [{{kv('AZURE_SQL_SCHEMA')}}].[green_tripdata] AS tgt
+          USING (
+              SELECT
+                  LOWER(CONVERT(NVARCHAR(32), HASHBYTES(
+                    'MD5',
+                    COALESCE(CAST(VendorID AS NVARCHAR(MAX)), '') +
+                    COALESCE(CONVERT(NVARCHAR(33), lpep_pickup_datetime, 126), '') +
+                    COALESCE(CONVERT(NVARCHAR(33), lpep_dropoff_datetime, 126), '') +
+                    COALESCE(PULocationID, '') +
+                    COALESCE(DOLocationID, '') +
+                    COALESCE(CAST(fare_amount AS NVARCHAR(MAX)), '') +
+                    COALESCE(CAST(trip_distance AS NVARCHAR(MAX)), '')
+                  ), 2))                                    AS unique_row_id,
+                  '{{render(vars.file)}}'                   AS filename,
+                  VendorID,
+                  TRY_CAST(lpep_pickup_datetime   AS DATETIME2) AS lpep_pickup_datetime,
+                  TRY_CAST(lpep_dropoff_datetime  AS DATETIME2) AS lpep_dropoff_datetime,
+                  store_and_fwd_flag,
+                  RatecodeID,
+                  PULocationID,
+                  DOLocationID,
+                  TRY_CAST(NULLIF(passenger_count,'')        AS INT)           AS passenger_count,
+                  TRY_CAST(NULLIF(trip_distance,'')          AS DECIMAL(18,3)) AS trip_distance,
+                  TRY_CAST(NULLIF(fare_amount,'')            AS DECIMAL(18,2)) AS fare_amount,
+                  TRY_CAST(NULLIF(extra,'')                  AS DECIMAL(18,2)) AS extra,
+                  TRY_CAST(NULLIF(mta_tax,'')                AS DECIMAL(18,2)) AS mta_tax,
+                  TRY_CAST(NULLIF(tip_amount,'')             AS DECIMAL(18,2)) AS tip_amount,
+                  TRY_CAST(NULLIF(tolls_amount,'')           AS DECIMAL(18,2)) AS tolls_amount,
+                  TRY_CAST(NULLIF(ehail_fee,'')              AS DECIMAL(18,2)) AS ehail_fee,
+                  TRY_CAST(NULLIF(improvement_surcharge,'')  AS DECIMAL(18,2)) AS improvement_surcharge,
+                  TRY_CAST(NULLIF(total_amount,'')           AS DECIMAL(18,2)) AS total_amount,
+                  TRY_CAST(NULLIF(payment_type,'')           AS INT)           AS payment_type,
+                  trip_type,
+                  TRY_CAST(NULLIF(congestion_surcharge,'')   AS DECIMAL(18,2)) AS congestion_surcharge
+              FROM OPENROWSET(
+                  BULK '{{render(vars.json_blob_name)}}',
+                  DATA_SOURCE = '{{kv('AZURE_EXTERNAL_DATA_SOURCE')}}',
+                  SINGLE_CLOB
+              ) AS src
+              CROSS APPLY OPENJSON(src.BulkColumn)
+              WITH (
+                  VendorID              NVARCHAR(50),
+                  lpep_pickup_datetime  NVARCHAR(50),
+                  lpep_dropoff_datetime NVARCHAR(50),
+                  store_and_fwd_flag    NVARCHAR(10),
+                  RatecodeID            NVARCHAR(50),
+                  PULocationID          NVARCHAR(50),
+                  DOLocationID          NVARCHAR(50),
+                  passenger_count       NVARCHAR(50),
+                  trip_distance         NVARCHAR(50),
+                  fare_amount           NVARCHAR(50),
+                  extra                 NVARCHAR(50),
+                  mta_tax               NVARCHAR(50),
+                  tip_amount            NVARCHAR(50),
+                  tolls_amount          NVARCHAR(50),
+                  ehail_fee             NVARCHAR(50),
+                  improvement_surcharge NVARCHAR(50),
+                  total_amount          NVARCHAR(50),
+                  payment_type          NVARCHAR(50),
+                  trip_type             NVARCHAR(50),
+                  congestion_surcharge  NVARCHAR(50)
+              ) AS j
+          ) AS src
+          ON tgt.unique_row_id = src.unique_row_id
+          WHEN MATCHED THEN
+            UPDATE SET
+              filename = src.filename,
+              VendorID = src.VendorID,
+              lpep_pickup_datetime = src.lpep_pickup_datetime,
+              lpep_dropoff_datetime = src.lpep_dropoff_datetime,
+              store_and_fwd_flag = src.store_and_fwd_flag,
+              RatecodeID = src.RatecodeID,
+              PULocationID = src.PULocationID,
+              DOLocationID = src.DOLocationID,
+              passenger_count = src.passenger_count,
+              trip_distance = src.trip_distance,
+              fare_amount = src.fare_amount,
+              extra = src.extra,
+              mta_tax = src.mta_tax,
+              tip_amount = src.tip_amount,
+              tolls_amount = src.tolls_amount,
+              ehail_fee = src.ehail_fee,
+              improvement_surcharge = src.improvement_surcharge,
+              total_amount = src.total_amount,
+              payment_type = src.payment_type,
+              trip_type = src.trip_type,
+              congestion_surcharge = src.congestion_surcharge
+          WHEN NOT MATCHED THEN
+            INSERT (
+              unique_row_id, filename, VendorID, lpep_pickup_datetime, lpep_dropoff_datetime,
+              passenger_count, trip_distance, RatecodeID, store_and_fwd_flag, PULocationID, DOLocationID,
+              payment_type, fare_amount, extra, mta_tax, tip_amount, tolls_amount,
+              ehail_fee, improvement_surcharge, total_amount, congestion_surcharge
+            )
+            VALUES (
+              src.unique_row_id, src.filename, src.VendorID, src.lpep_pickup_datetime, src.lpep_dropoff_datetime,
+              src.passenger_count, src.trip_distance, src.RatecodeID, src.store_and_fwd_flag, src.PULocationID, src.DOLocationID,
+              src.payment_type, src.fare_amount, src.extra, src.mta_tax, src.tip_amount, src.tolls_amount,
+              src.ehail_fee, src.improvement_surcharge, src.total_amount, src.congestion_surcharge
+            );
+
+  - id: log_summary
+    type: io.kestra.plugin.core.log.Log
+    message: "Ingestion finished: json={{render(vars.json_blob_name)}}, Azure SQL load done"
+
+  - id: purge_files
+    type: io.kestra.plugin.core.storage.PurgeCurrentExecutionFiles
+    description: Disable this if you want to inspect Kestra temporary files.
+    disabled: true
+
+triggers:
+  - id: monthly_schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 5 1 * *"
+    inputs:
+      taxi: green
+      year: "{{ now() | date('yyyy') }}"
+      month: "{{ now() | date('MM') }}"
+    disabled: true
+
+pluginDefaults:
+  - type: io.kestra.plugin.azure.storage.blob
+    values:
+      endpoint: "{{kv('AZURE_BLOB_ENDPOINT')}}"
+      sasToken: "{{secret('AZURE_STORAGE_SAS_TOKEN')}}"
+      container: "{{kv('AZURE_STORAGE_CONTAINER')}}"
+
+  - type: io.kestra.plugin.jdbc.sqlserver
+    values:
+      url: "jdbc:sqlserver://{{kv('AZURE_SQL_SERVER')}}.database.windows.net:1433;database={{kv('AZURE_SQL_DATABASE')}};user={{secret('AZURE_DB_USERNAME')}};password={{secret('AZURE_DB_PASSWORD')}};encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.database.windows.net;loginTimeout=30;"

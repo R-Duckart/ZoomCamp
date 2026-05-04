@@ -1,0 +1,54 @@
+id: 01_azure_ressources_kv
+namespace: zoomcamp
+description: |
+  Azure configuration values used by the Azure-based Kestra flows.
+  Secrets such as connection strings, SAS tokens, and passwords must stay in Kestra secrets.
+
+tasks:
+  - id: azure_subscription_id
+    type: io.kestra.plugin.core.kv.Set
+    key: AZURE_SUBSCRIPTION_ID
+    kvType: STRING
+    value: sh***t # TODO replace with your Azure subscription id
+
+  - id: azure_resource_group
+    type: io.kestra.plugin.core.kv.Set
+    key: AZURE_RESOURCE_GROUP
+    kvType: STRING
+    value: rg-zoomcamp # TODO replace with your resource group
+
+  - id: azure_location
+    type: io.kestra.plugin.core.kv.Set
+    key: AZURE_LOCATION
+    kvType: STRING
+    value: northeurope  # TODO choose your Azure region
+
+  - id: azure_blob_endpoint
+    type: io.kestra.plugin.core.kv.Set
+    key: AZURE_BLOB_ENDPOINT
+    kvType: STRING
+    value: https://maizoomcamp.blob.core.windows.net/
+
+  - id: azure_storage_container
+    type: io.kestra.plugin.core.kv.Set
+    key: AZURE_STORAGE_CONTAINER
+    kvType: STRING
+    value: ny-taxi
+
+  - id: azure_credential_blob_sas
+    type: io.kestra.plugin.core.kv.Set
+    key: AZURE_BLOB_CREDENTIAL
+    kvType: STRING
+    value: cred_blob_sas
+
+  - id: azure_external_data_source
+    type: io.kestra.plugin.core.kv.Set
+    key: AZURE_EXTERNAL_DATA_SOURCE
+    kvType: STRING
+    value: ds_blob_nytaxi
+
+  - id: azure_auth
+    type: io.kestra.plugin.core.kv.Set
+    key: AZURE_AUTH
+    kvType: STRING
+    value: Authentication=ActiveDirectoryPassword;user=votre@email.com;password=VotreMotDePasseAAD

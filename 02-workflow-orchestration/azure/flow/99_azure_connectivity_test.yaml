@@ -1,0 +1,16 @@
+id: 99_azure_connectivity_test
+namespace: zoomcamp
+description: |
+  Simple connectivity test to Azure Synapse Serverless SQL.
+  All values are hardcoded — no KV store required.
+  Run this to verify authentication and network access before running other flows.
+
+tasks:
+  - id: test_synapse_connection
+    type: io.kestra.plugin.jdbc.sqlserver.Query
+    sql: SELECT 1 AS connection_ok, GETDATE() AS server_time, USER_NAME() AS connected_as
+
+pluginDefaults:
+  - type: io.kestra.plugin.jdbc.sqlserver
+    values:
+      url: "jdbc:sqlserver://zoomcamp-ondemand.sql.azuresynapse.net:1433;database=taxi-rides-ny;Authentication=ActiveDirectoryDefault;encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.sql.azuresynapse.net;loginTimeout=30;"
