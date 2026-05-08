@@ -1,0 +1,52 @@
+seeds:
+  - name: payment_type_lookup
+    description: >
+      Payment type reference data mapping payment type codes to their descriptions.
+      Used as a dimension table for payment method analysis.
+    columns:
+      - name: payment_type
+        description: Numeric code for payment type
+        data_tests:
+          - unique
+          - not_null
+      - name: description
+        description: Human-readable description of payment method
+
+  - name: vendor_lookup
+    description: >
+      Vendor reference data mapping vendor codes to their company names.
+      Used as a dimension table for vendor analysis.
+    columns:
+      - name: vendor_id
+        description: Numeric code for the TPEP/LPEP provider.
+        data_tests:
+          - unique
+          - not_null
+      - name: vendor_name
+        description: Company name of the technology provider.
+
+  - name: ratecode_lookup
+    description: >
+      Rate code reference data mapping rate codes to their descriptions.
+      Used as a dimension table for fare rate analysis.
+    columns:
+      - name: ratecode_id
+        description: Numeric code for the final rate in effect.
+        data_tests:
+          - unique
+          - not_null
+      - name: ratecode_description
+        description: Human-readable description of the rate code.
+
+  - name: trip_type_lookup
+    description: >
+      Trip type reference data mapping trip type codes to their descriptions.
+      Used as a dimension table for trip dispatch analysis.
+    columns:
+      - name: trip_type
+        description: Numeric code for the trip type.
+        data_tests:
+          - unique
+          - not_null
+      - name: trip_type_description
+        description: Human-readable description of the trip type.

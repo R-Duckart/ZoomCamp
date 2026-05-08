@@ -1,0 +1,179 @@
+version: 2
+
+models:
+  - name: stg_green_tripdata
+    description: "Staging view of green taxi (SHL) trip data"
+    columns:
+      # identifiers
+      - name: vendor_id
+        description: "LPEP provider. 1=Creative Mobile Technologies, 2=VeriFone Inc."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2]
+                quote: false
+      - name: ratecode_id
+        description: "Final rate code. 1=Standard, 2=JFK, 3=Newark, 4=Nassau/Westchester, 5=Negotiated, 6=Group ride, 99=Not available."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6, 99]
+                quote: false
+      - name: pickup_location_id
+        description: "TLC Taxi Zone in which the meter was engaged."
+        data_tests:
+          - not_null
+      - name: dropoff_location_id
+        description: "TLC Taxi Zone in which the meter was disengaged."
+        data_tests:
+          - not_null
+      - name: payment_type
+        description: "1=Credit card, 2=Cash, 3=No charge, 4=Dispute, 5=Unknown, 6=Voided."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6]
+                quote: false
+      - name: trip_type
+        description: "1=Street-hail, 2=Dispatch."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2]
+                quote: false
+      # timestamps
+      - name: pickup_datetime
+        description: "The date and time when the meter was engaged."
+        data_tests:
+          - not_null
+      - name: dropoff_datetime
+        description: "The date and time when the meter was disengaged."
+        data_tests:
+          - not_null
+      # trip info
+      - name: passenger_count
+        description: "Number of passengers (driver-entered value)."
+      - name: trip_distance
+        description: "Elapsed trip distance in miles reported by the taximeter."
+      - name: store_and_forward_flag
+        description: "Y=store and forward trip, N=not a store and forward trip."
+        data_tests:
+          - accepted_values:
+              values: ['Y', 'N']
+      # amounts
+      - name: fare_amount
+        description: "Time-and-distance fare calculated by the meter."
+      - name: extra
+        description: "Miscellaneous extras and surcharges ($0.50/$1 rush hour and overnight charges)."
+      - name: mta_tax
+        description: "$0.50 MTA tax."
+      - name: tip_amount
+        description: "Tip amount (credit card only, cash tips not included)."
+      - name: tolls_amount
+        description: "Total amount of all tolls paid in trip."
+      - name: ehail_fee
+        description: "E-hail fee (not currently in use)."
+      - name: improvement_surcharge
+        description: "$0.30 improvement surcharge at flag drop."
+      - name: congestion_surcharge
+        description: "Congestion surcharge ($2.75 for green taxi)."
+      - name: total_amount
+        description: "Total amount charged to passengers (does not include cash tips)."
+
+  - name: stg_yellow_tripdata
+    description: "Staging view of yellow taxi (medallion) trip data"
+    columns:
+      # identifiers
+      - name: vendor_id
+        description: "TPEP provider. 1=Creative Mobile Technologies, 2=VeriFone Inc."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 4]
+                quote: false
+      - name: ratecode_id
+        description: "Final rate code. 1=Standard, 2=JFK, 3=Newark, 4=Nassau/Westchester, 5=Negotiated, 6=Group ride, 99=Not available."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6, 99]
+                quote: false
+      - name: pickup_location_id
+        description: "TLC Taxi Zone in which the meter was engaged."
+        data_tests:
+          - not_null
+      - name: dropoff_location_id
+        description: "TLC Taxi Zone in which the meter was disengaged."
+        data_tests:
+          - not_null
+      - name: payment_type
+        description: "1=Credit card, 2=Cash, 3=No charge, 4=Dispute, 5=Unknown, 6=Voided."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6]
+                quote: false
+      - name: trip_type
+        description: "1=Street-hail, 2=Dispatch (always null for yellow taxi)."
+      # timestamps
+      - name: pickup_datetime
+        description: "The date and time when the meter was engaged."
+        data_tests:
+          - not_null
+      - name: dropoff_datetime
+        description: "The date and time when the meter was disengaged."
+        data_tests:
+          - not_null
+      - name: store_and_forward_flag
+        description: "Y=store and forward trip, N=not a store and forward trip."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['Y', 'N']
+      # trip info
+      - name: passenger_count
+        description: "Number of passengers (driver-entered value)."
+      - name: trip_distance
+        description: "Elapsed trip distance in miles reported by the taximeter."
+      # amounts
+      - name: fare_amount
+        description: "Time-and-distance fare calculated by the meter."
+      - name: extra
+        description: "Miscellaneous extras and surcharges ($0.50/$1 rush hour and overnight charges)."
+      - name: mta_tax
+        description: "$0.50 MTA tax."
+      - name: tip_amount
+        description: "Tip amount (credit card only, cash tips not included)."
+      - name: tolls_amount
+        description: "Total amount of all tolls paid in trip."
+      - name: ehail_fee
+        description: "E-hail fee (always null for yellow taxi)."
+      - name: improvement_surcharge
+        description: "$0.30 improvement surcharge at flag drop."
+      - name: congestion_surcharge
+        description: "Congestion surcharge ($2.50 for yellow taxi)."
+      - name: total_amount
+        description: "Total amount charged to passengers (does not include cash tips)."
+
+  - name: stg_taxi_zones
+    description: "Staging view of TLC Taxi Zone reference data."
+    columns:
+      - name: location_id
+        description: "Unique TLC Taxi Zone identifier."
+        data_tests:
+          - unique
+          - not_null
+      - name: borough
+        description: "NYC borough name."
+        data_tests:
+          - not_null
+      - name: zone
+        description: "Taxi zone name within the borough."
+        data_tests:
+          - not_null
+      - name: service_zone
+        description: "Service zone classification (Yellow Zone, Boro Zone, EWR)."
+        data_tests:
+          - not_null
