@@ -15,7 +15,7 @@ tasks:
     type: io.kestra.plugin.core.kv.Set
     key: AZURE_RESOURCE_GROUP
     kvType: STRING
-    value: rg-zoomcamp # TODO replace with your resource group
+    value: your-resource-group # TODO replace with your resource group
 
   - id: azure_location
     type: io.kestra.plugin.core.kv.Set
@@ -27,7 +27,7 @@ tasks:
     type: io.kestra.plugin.core.kv.Set
     key: AZURE_BLOB_ENDPOINT
     kvType: STRING
-    value: https://maizoomcamp.blob.core.windows.net/
+    value: https://your-storage-account.blob.core.windows.net/
 
   - id: azure_storage_container
     type: io.kestra.plugin.core.kv.Set

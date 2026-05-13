@@ -9,7 +9,7 @@ tasks:
     type: io.kestra.plugin.core.kv.Set
     key: AZURE_SYNAPSE_SQL_ENDPOINT
     kvType: STRING
-    value: zoomcamp-ondemand.sql.azuresynapse.net
+    value: your-synapse-workspace.sql.azuresynapse.net
 
   - id: azure_synapse_database
     type: io.kestra.plugin.core.kv.Set

@@ -44,9 +44,9 @@ The repository is organized into modules, each covering a specific aspect of dat
 
 ### 🔧 05-data-platforms
 **Data Platform Exploration**  
-- Experimenting with Bruin as a data pipeline tool
-- Alternative approaches to data pipeline orchestration
-- Technologies: Bruin CLI
+- Intended to explore Bruin CLI for data pipeline orchestration
+- **Not completed**: The Bruin CLI tool was not mature enough at the time to warrant a full implementation
+- Technologies: Bruin CLI (evaluation only - nothing to publish)
 
 ### ⚡ 06-batch
 **Batch Processing with Spark**  
@@ -64,16 +64,6 @@ The repository is organized into modules, each covering a specific aspect of dat
 - Learning streaming architectures and patterns
 - Technologies: Apache Flink, Kafka/Redpanda, Docker
 
-### 🎯 08-project
-**Final Integration Project**  
-- Capstone project combining multiple learnings
-- NYC taxi application use case: estimating ride time and fare
-- Multiple orchestration approaches:
-  - **Airflow**: Traditional workflow orchestration
-  - **Kestra**: Modern declarative orchestration
-- End-to-end pipeline: ingestion → transformation → reporting → ML preparation
-- Development vs. Production environment patterns
-- Technologies: Airflow, Kestra, dbt, DuckDB, Cloud platforms
 
 ## Primary Dataset
 
@@ -93,18 +83,7 @@ The project primarily uses **NYC Taxi Trip Record Data** from:
 - **Stream Processing**: Apache Flink, Kafka/Redpanda
 - **Analytics Engineering**: dbt (data build tool)
 - **Data Formats**: CSV, Parquet
-- **Infrastructure as Code**: Terraform (documented in docs/)
 
-## Documentation
-
-The `docs/` folder contains additional learning notes and references:
-- Azure setup and configurations
-- Google Cloud Platform guides
-- Docker best practices
-- Kafka and streaming concepts
-- Terraform infrastructure examples
-- Virtual environment management
-- Base64 encoding utilities
 
 ## Development Philosophy
 

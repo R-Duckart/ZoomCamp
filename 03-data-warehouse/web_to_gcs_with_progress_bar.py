@@ -15,8 +15,8 @@ BUCKET_NAME = os.environ.get("GCP_GCS_BUCKET")
 # If you authenticated through the GCP SDK you can comment out these two lines
 CREDENTIALS_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
 client = storage.Client.from_service_account_json(CREDENTIALS_FILE)
-# If commented initialize client with the following
-# client = storage.Client(project='zoomcamp-mod3-datawarehouse')
+# If commented initialize client with the following (using Application Default Credentials)
+# client = storage.Client(project='your-gcp-project-id')
 
 
 BASE_URL = "https://github.com/DataTalksClub/nyc-tlc-data/releases/download/yellow/yellow_tripdata_{year}-{month}.csv.gz"

@@ -9,7 +9,7 @@ tasks:
     type: io.kestra.plugin.core.kv.Set
     key: AZURE_SQL_SERVER
     kvType: STRING
-    value: zoomcamp-sql-server # TODO server name without .database.windows.net
+    value: your-sql-server # TODO server name without .database.windows.net
 
   - id: azure_sql_database
     type: io.kestra.plugin.core.kv.Set
