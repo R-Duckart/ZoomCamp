@@ -1,0 +1,99 @@
+{
+  "type": "record",
+  "name": "TaxiRide",
+  "namespace": "com.zoomcamp.taxi",
+  "fields": [
+    {
+      "name": "VendorID",
+      "type": "int"
+    },
+    {
+      "name": "tpep_pickup_datetime",
+      "type": "long",
+      "doc": "Pickup datetime in milliseconds since epoch"
+    },
+    {
+      "name": "tpep_dropoff_datetime",
+      "type": "long",
+      "doc": "Dropoff datetime in milliseconds since epoch"
+    },
+    {
+      "name": "passenger_count",
+      "type": ["null", "int"],
+      "default": null
+    },
+    {
+      "name": "trip_distance",
+      "type": "double"
+    },
+    {
+      "name": "RatecodeID",
+      "type": ["null", "float"],
+      "default": null
+    },
+    {
+      "name": "store_and_fwd_flag",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "PULocationID",
+      "type": "int"
+    },
+    {
+      "name": "DOLocationID",
+      "type": "int"
+    },
+    {
+      "name": "payment_type",
+      "type": ["null", "int"],
+      "default": null
+    },
+    {
+      "name": "fare_amount",
+      "type": "double"
+    },
+    {
+      "name": "extra",
+      "type": "double"
+    },
+    {
+      "name": "mta_tax",
+      "type": "double"
+    },
+    {
+      "name": "tip_amount",
+      "type": "double"
+    },
+    {
+      "name": "tolls_amount",
+      "type": "double"
+    },
+    {
+      "name": "improvement_surcharge",
+      "type": "double"
+    },
+    {
+      "name": "total_amount",
+      "type": "double"
+    },
+    {
+      "name": "ehail_fee",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "E-hail fee (always null for yellow taxi)"
+    },
+    {
+      "name": "congestion_surcharge",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Congestion surcharge ($2.50 for yellow taxi trips)"
+    },
+    {
+      "name": "trip_type",
+      "type": ["null", "int"],
+      "default": null,
+      "doc": "1=Street-hail, 2=Dispatch (always null for yellow taxi)"
+    }
+  ]
+}

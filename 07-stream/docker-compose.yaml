@@ -1,0 +1,92 @@
+services:
+  redpanda:
+    image: redpandadata/redpanda:v25.3.9
+    env_file:
+      - ./.env
+    command:
+      - redpanda
+      - start
+      - --smp
+      - '1'
+      - --reserve-memory
+      - 0M
+      - --overprovisioned
+      - --node-id
+      - '1'
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+      - --pandaproxy-addr
+      - PLAINTEXT://0.0.0.0:28082,OUTSIDE://0.0.0.0:8082
+      - --advertise-pandaproxy-addr
+      - PLAINTEXT://redpanda:28082,OUTSIDE://localhost:8082
+      - --rpc-addr
+      - 0.0.0.0:33145
+      - --advertise-rpc-addr
+      - redpanda:33145
+      - --schema-registry-addr
+      - internal://0.0.0.0:28081,external://0.0.0.0:8081
+
+    ports:
+      - 8082:8082
+      - 9092:9092
+      - 8081:8081
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+      - ./data:/data
+
+  jobmanager:
+      build:
+        context: .
+        dockerfile: ./Dockerfile.flink
+      image: pyflink-workshop
+      env_file:
+        - ./.env
+      pull_policy: never
+      expose:
+        - "6123"
+      ports:
+        - "8085:8085"
+      volumes:
+        - ./dev/:/opt/flink/usrlib
+        - ./dev/src/:/opt/src
+      command: jobmanager
+      environment:
+        - |
+          FLINK_PROPERTIES=
+          jobmanager.rpc.address: jobmanager
+          jobmanager.memory.process.size: 1600m
+
+  taskmanager:
+    image: pyflink-workshop
+    env_file:
+      - ./.env
+    pull_policy: never
+    expose:
+      - "6121"
+      - "6122"
+    volumes:
+      - ./dev/:/opt/flink/usrlib
+      - ./dev/src/:/opt/src
+    depends_on:
+      - jobmanager
+    command: taskmanager --taskmanager.registration.timeout 5 min
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        taskmanager.memory.process.size: 1728m
+        taskmanager.numberOfTaskSlots: 15
+        parallelism.default: 3
+
+  postgres:
+      image: postgres:18
+      restart: on-failure
+      env_file:
+        - ./.env
+      ports:
+        - "5432:5432"
+
+volumes:
+  redpanda-data:
