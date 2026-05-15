@@ -17,7 +17,7 @@ MONTHS = [f"{i:02d}" for i in range(1, 3)]
 CHUNK_SIZE = 8 * 1024 * 1024
 GCS_ROOT_DIR = "taxi-ny"
 MAX_WORKERS = 4
-DOWNLOAD_CSV = os.path.join("DOWNLOAD", "CSV")
+DOWNLOAD_CSV = os.path.join("..", "DOWNLOAD", "CSV")
 
 
 def download_file(taxi, year, month, format="csv.gz"):
@@ -68,7 +68,7 @@ def convert_csv_to_parquet(csv_file_path, taxi):
             parse_dates = ["lpep_pickup_datetime", "lpep_dropoff_datetime"]
 
         file_name = os.path.basename(csv_file_path).replace(".csv.gz", ".parquet")
-        parquet_path = os.path.join(os.getcwd(), 'parquet', file_name)
+        parquet_path = os.path.join("..", "parquet", file_name)
         os.makedirs(os.path.dirname(parquet_path), exist_ok=True)
 
         # Apply dtypes and parse_dates only for columns that exist in this file.
@@ -182,8 +182,11 @@ if __name__ == "__main__":
     else:
         print("Uploading to DuckDB...")
         import duckdb
-        DUCKDB_FILE = os.environ.get("DUCKDB_FILE", "taxi.duckdb")
-        con = duckdb.connect(DUCKDB_FILE)
+        duckdb_file = os.environ.get("DUCKDB_FILE", "taxi.duckdb")
+        duckdb_path = os.path.join("..", "datawarehouse","duckdb",duckdb_file)
+        os.makedirs(os.path.dirname(duckdb_path), exist_ok=True)
+        con = duckdb.connect(duckdb_path)
+
         results = [upload_to_duckdb(fp, con) for fp in file_paths]
         con.close()
 

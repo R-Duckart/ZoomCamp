@@ -13,7 +13,7 @@ BASE_URL = "https://github.com/DataTalksClub/data-engineering-zoomcamp/blob/main
 GCS_ROOT_DIR = "taxi-ny"
 GCS_BLOB_PREFIX = f"{GCS_ROOT_DIR}/zones"
 CHUNK_SIZE = 5 * 1024 * 1024  # 5 MB
-DOWNLOAD_CSV = os.path.join("DOWNLOAD", "CSV")
+DOWNLOAD_CSV = os.path.join("..", "DOWNLOAD", "CSV")
 
 
 def download_file():
@@ -41,7 +41,7 @@ def convert_csv_to_parquet(csv_file_path):
     }
     try:
         file_name = os.path.basename(csv_file_path).replace(".csv", ".parquet")
-        parquet_path = os.path.join(os.getcwd(), 'parquet', file_name)
+        parquet_path = os.path.join('..', 'parquet', file_name)
         os.makedirs(os.path.dirname(parquet_path), exist_ok=True)
 
         # Apply dtypes only for columns that exist in this file.
@@ -129,7 +129,6 @@ if __name__ == "__main__":
     # Download csv files in parallel
     file_path = download_file()
     parquet_file_path = convert_csv_to_parquet(file_path)
-
 
 
     if args.target == "gcs":
