@@ -1,6 +1,12 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+'''
+    Before executing this script you have to get the parquet files from the previous step.
+    execute the following command from the root of the project: 03-data-warehouse\scripts\fetch_csv__parquert_to_datalake.py
+    ex: (from scripts dir) uv run ..\..\03-data-warehouse\scripts\fetch_csv__parquert_to_datalake.py will download the csv files, convert them to parquet and upload to duckdb.
+'''
+
 import argparse
 
 import pyspark

@@ -12,6 +12,7 @@ services:
     volumes:
       - ./:/opt/workspace
       - ./datalake:/app/datalake
+      - ./datawarehouse:/app/datawarehouse
       - ./gcp-key:/opt/gcp-key:ro
     environment:
       GOOGLE_APPLICATION_CREDENTIALS: /opt/gcp-key/application_default_credentials.json
@@ -33,6 +34,7 @@ services:
     volumes:
       - ./:/opt/workspace
       - ./datalake:/app/datalake
+      - ./datawarehouse:/app/datawarehouse
       - ./gcp-key:/opt/gcp-key:ro
     environment:
       GOOGLE_APPLICATION_CREDENTIALS: /opt/gcp-key/application_default_credentials.json

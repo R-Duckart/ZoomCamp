@@ -1,14 +1,30 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import argparse
+'''
+    Before executing this script you have to get the parquet files from the previous step. 
+    You can do this by running the following command from the root of the project: uv run 00_get_parquets_files.py
+'''
 
+import argparse
 import pyspark
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 import os
 
 def get_argurments() -> argparse.Namespace:
+    """
+    Parse command-line arguments.
+    
+    Args:
+        --raw_sources: Path to raw parquet files (green/yellow)
+        --output: Path where to write output parquet files
+        --year: Year to process (e.g., 2020)
+        --debug: Enable debug logging (default: False)
+    
+    Returns:
+        argparse.Namespace: Parsed arguments
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument('--raw_sources', required=True)
     parser.add_argument('--output', required=True)
@@ -36,6 +52,25 @@ def get_spark_session(debug: bool) -> SparkSession:
     return spark
 
 def process_data(spark: SparkSession, input_green: str, input_yellow: str) -> pyspark.sql.DataFrame:
+    """
+    Read and process green and yellow taxi data.
+    
+    - Reads parquet files recursively from both sources
+    - Standardizes column names (pickup/dropoff datetime)
+    - Selects common columns from both datasets
+    - Combines both datasets with service_type indicator
+    
+    Args:
+        spark: Spark session
+        input_green: Path to green taxi parquet files
+        input_yellow: Path to yellow taxi parquet files
+    
+    Returns:
+        pyspark.sql.DataFrame: Combined and processed taxi data
+    
+    Raises:
+        SystemExit: If parquet files cannot be read
+    """
     try:
         df_green = spark.read.option("recursiveFileLookup", "true").parquet(input_green)
         df_green = df_green \
@@ -85,6 +120,20 @@ def process_data(spark: SparkSession, input_green: str, input_yellow: str) -> py
     return df_trips_data
 
 def calculate_revenue(df_trips_data: pyspark.sql.DataFrame, spark: SparkSession) -> pyspark.sql.DataFrame:
+    """
+    Calculate monthly revenue metrics grouped by location and service type.
+    
+    - Groups by pickup location (zone), month, and service type
+    - Calculates total revenue and fare breakdown
+    - Computes average passenger count and trip distance
+    
+    Args:
+        df_trips_data: DataFrame with processed taxi trip data
+        spark: Spark session
+    
+    Returns:
+        pyspark.sql.DataFrame: Revenue metrics by zone, month, and service type
+    """
     df_trips_data.createOrReplaceTempView('trips_data')
 
     df_result = spark.sql("""
@@ -116,6 +165,16 @@ def calculate_revenue(df_trips_data: pyspark.sql.DataFrame, spark: SparkSession)
     return df_result
 
 def __main__():
+    """
+    Main orchestration function.
+    
+    Workflow:
+    1. Parse command-line arguments
+    2. Initialize Spark session
+    3. Load and process green/yellow taxi data
+    4. Calculate revenue metrics
+    5. Write results to parquet
+    """
     try:
         args = get_argurments()
 

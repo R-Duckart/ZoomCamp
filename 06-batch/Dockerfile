@@ -6,6 +6,7 @@ USER root
 ARG HADOOP_VERSION=3.3.4
 ARG GCS_CONNECTOR_VERSION=hadoop3-2.2.22
 ARG BQ_CONNECTOR_VERSION=0.36.1
+ARG DUCKDB_JDBC_VERSION=1.3.1.0
 
 
 # System dependencies
@@ -15,8 +16,13 @@ RUN apt-get update \
 
 # Python: duckdb + GCP client
 RUN pip install --no-cache-dir \
+    duckdb \
     google-cloud-storage \
     google-auth
+
+# DuckDB JDBC driver → Spark reads DuckDB via JDBC
+RUN curl -fsSL -o /opt/spark/jars/duckdb_jdbc-${DUCKDB_JDBC_VERSION}.jar \
+    https://repo1.maven.org/maven2/org/duckdb/duckdb_jdbc/${DUCKDB_JDBC_VERSION}/duckdb_jdbc-${DUCKDB_JDBC_VERSION}.jar
 
 
 # # GCS connector → Spark reads gs:// paths (Google Cloud Storage)

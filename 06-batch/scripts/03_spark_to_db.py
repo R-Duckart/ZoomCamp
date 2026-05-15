@@ -1,6 +1,56 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+"""
+Spark Revenue Aggregation Pipeline - DuckDB & BigQuery
+
+Processes raw taxi parquet files with Apache Spark, calculates monthly revenue metrics
+by zone and service type, and writes results to either DuckDB (dev) or BigQuery (prod).
+
+Features:
+    - Environment-aware execution (dev/prod) via ENV variable
+    - Reads green and yellow taxi data from data lake
+    - Aggregates revenue by pickup location, month, and service type
+    - Writes to DuckDB (local) or BigQuery (GCP) based on environment
+    - Handles schema differences between green and yellow taxi data
+    - Uses single-partition write for DuckDB to avoid file lock conflicts
+
+Usage:
+    # Development mode (DuckDB)
+    docker exec -it spark-master /opt/spark/bin/spark-submit \
+      --master spark://spark-master:7077 \
+      /opt/workspace/scripts/03_spark_to_db.py \
+      --year 2019
+    
+    # With debug output
+    docker exec -it spark-master /opt/spark/bin/spark-submit \
+      --master spark://spark-master:7077 \
+      /opt/workspace/scripts/03_spark_to_db.py \
+      --year 2019 --debug
+
+Environment Variables Required:
+    Development (ENV=dev):
+        - DATALAKE_SOURCES: Path to raw taxi parquet files
+        - DB_PATH: Path to DuckDB file
+        - DB_TABLE: Target table name
+        - DB_SCHEMA: Target schema name (default: reporting)
+    
+    Production (ENV=prod):
+        - DATALAKE_SOURCES: Path to raw taxi parquet files (can be GCS path)
+        - GOOGLE_APPLICATION_CREDENTIALS: Path to GCP service account key
+        - GCP_PROJECT_ID: GCP project ID
+        - GCP_BUCKET: Temporary GCS bucket for BigQuery staging
+        - GCP_DATASET: Target BigQuery dataset
+        - DB_TABLE: Target table name
+
+Output Schema:
+    - revenue_zone: Pickup location ID
+    - revenue_month: Month truncated to first day
+    - service_type: 'green' or 'yellow'
+    - revenue_monthly_*: Sum of fare components
+    - avg_monthly_*: Average passenger count and trip distance
+"""
+
 import argparse
 import os
 import duckdb
@@ -23,13 +73,12 @@ def get_argurments() -> argparse.Namespace:
 # Spark session
 # ---------------------------------------------------------------------------
 def get_spark_session(env: str, debug: bool) -> SparkSession:
-
     builder = SparkSession.builder.appName(f"taxi-revenue-{env}")
 
     if env == "prod":
-        gcp_key     = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
-        project     = os.environ["GCP_PROJECT_ID"]
-        temp_bucket = "[GCP_TEMP_BUCKET]" 
+        gcp_key = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+        project = os.environ["GCP_PROJECT_ID"]
+        bucket = os.environ["GCP_BUCKET"]
         builder = builder \
             .config("spark.hadoop.fs.gs.impl",
                     "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem") \
@@ -38,7 +87,7 @@ def get_spark_session(env: str, debug: bool) -> SparkSession:
             .config("spark.hadoop.google.cloud.auth.service.account.enable", "true") \
             .config("spark.hadoop.google.cloud.auth.service.account.json.keyfile", gcp_key) \
             .config("spark.datasource.bigquery.project", project) \
-            .config("spark.datasource.bigquery.temporaryGcsBucket", temp_bucket)
+            .config("spark.datasource.bigquery.temporaryGcsBucket", bucket)
 
     spark = builder.getOrCreate()
     spark.sparkContext.setLogLevel("DEBUG" if debug else "ERROR")
@@ -49,6 +98,31 @@ def get_spark_session(env: str, debug: bool) -> SparkSession:
 # Read input
 # ---------------------------------------------------------------------------
 def process_data(spark: SparkSession, source: str, year: str):
+    """
+    Read and prepare taxi trip data for revenue aggregation.
+    
+    Reads green and yellow taxi parquet files, standardizes column names,
+    selects common columns, and creates a unified 'trips_data' view.
+    
+    Args:
+        spark: Active SparkSession
+        source: Base path to raw parquet files (local or GCS)
+        year: Year to process as string (e.g., '2019')
+    
+    Side Effects:
+        - Creates 'trips_data' temporary view in Spark session
+        - Prints record counts for validation
+    
+    Schema Transformations:
+        - Green: lpep_pickup_datetime -> pickup_datetime
+        - Green: lpep_dropoff_datetime -> dropoff_datetime
+        - Yellow: tpep_pickup_datetime -> pickup_datetime
+        - Yellow: tpep_dropoff_datetime -> dropoff_datetime
+        - Adds service_type column ('green' or 'yellow')
+    
+    Raises:
+        SystemExit: If parquet files cannot be read
+    """
     try:
         df_green = spark.read.option("recursiveFileLookup", "true").parquet(os.path.join(source, "green", year))
         df_green = df_green \
@@ -102,6 +176,13 @@ def process_data(spark: SparkSession, source: str, year: str):
 # Transform
 # ---------------------------------------------------------------------------
 def create_df_revenue(spark: SparkSession) -> pyspark.sql.DataFrame:
+    """
+    Calculate monthly revenue metrics grouped by zone and service type.
+    
+    Aggregates the 'trips_data' view (created by process_data) to compute:
+    - Total revenue by fare component (fare, extra, tax, tip, tolls, etc.)
+    - Average passenger count and trip distance per zone/month/service
+    """
 
     sql_classic_df = spark.sql("""
         SELECT
@@ -128,6 +209,47 @@ def create_df_revenue(spark: SparkSession) -> pyspark.sql.DataFrame:
 # Write output
 # ---------------------------------------------------------------------------
 def write_output(df: pyspark.sql.DataFrame, env: str):
+    """
+    Write revenue DataFrame to target database based on environment.
+    
+    Production (env='prod'):
+        - Writes to Google BigQuery using BigQuery connector
+        - Uses mode='ignore' to skip if table exists
+        - Requires GCP credentials and permissions
+    
+    Development (env='dev'):
+        - Writes to DuckDB via JDBC
+        - Uses single-partition write to avoid file lock conflicts
+        - Creates schema and table before writing
+        - Uses mode='append'
+    
+    Args:
+        df: DataFrame containing revenue metrics to write
+        env: Target environment - 'prod' for BigQuery, 'dev' for DuckDB
+    
+    Environment Variables:
+        Production (prod):
+            - GCP_PROJECT_ID: Google Cloud project ID
+            - GCP_DATASET: Target BigQuery dataset
+            - DB_TABLE: Target table name
+        
+        Development (dev):
+            - DB_PATH: Path to DuckDB file
+            - DB_TABLE: Target table name
+            - DB_SCHEMA: Target schema (default: 'reporting')
+    
+    Side Effects:
+        - Creates DuckDB schema and table if they don't exist (dev mode)
+        - Writes data to database
+        - Prints row counts and table names for validation
+    
+    Raises:
+        SystemExit: If write operation fails
+    
+    Note:
+        DuckDB write uses coalesce(1) to serialize writes and avoid
+        "Conflicting lock is held" errors from concurrent access.
+    """
     if env == "prod":
         project  = os.environ["GCP_PROJECT_ID"]
         dataset  = os.environ["GCP_DATASET"]
@@ -182,6 +304,15 @@ def write_output(df: pyspark.sql.DataFrame, env: str):
 # Main
 # ---------------------------------------------------------------------------
 def main():
+    """
+    Main orchestration function for the taxi revenue pipeline.
+    Workflow:
+        1. Parse command-line arguments
+        2. Initialize Spark session based on environment
+        3. Load and process green/yellow taxi data from parquet
+        4. Calculate revenue metrics using SQL aggregation
+        5. Write results to target database (DuckDB or BigQuery)
+    """
     try:
         env = os.environ.get("ENV", "dev").lower()
         source = os.environ["DATALAKE_SOURCES"]  # → /opt/workspace/datalake/raw/taxi

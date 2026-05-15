@@ -1,122 +1,174 @@
-In prod, if BigQuery already has the gold mart table, why use Spark to build the report? BigQuery can do that SQL aggregation natively, cheaper and faster, without a Spark cluster
-Spark adds value when data is too large for a single SQL engine, or when you need ML / complex transformations that SQL can't express
+# 06-Batch: Spark Processing Pipeline
 
-Spark in prod makes more sense if the source is raw GCS parquet (bypassing BigQuery entirely for cost reasons), or if the report logic becomes too complex for SQL.
+## Overview
 
+This module demonstrates Spark-based data processing for building revenue reports from taxi data. It reads raw parquet files from a data lake, aggregates them by location and month, and writes the results to either **DuckDB (dev)** or **BigQuery (prod)**.
 
-## Configuration
+> **Architecture Note:** In production, if BigQuery already has the gold mart table, BigQuery SQL aggregation may be more cost-effective than Spark. Spark adds value when: (1) data is too large for single SQL engine, (2) complex ML/transformations needed, or (3) reading raw GCS parquet directly to bypass BigQuery ingestion costs.
 
-Before running the project, copy the `.env.example` file to `.env` and configure your GCP credentials:
+## Scripts Available
+
+| Script | Purpose | Input | Output |
+|--------|---------|-------|--------|
+| `00_get_parquets_files` | Download from zoomcamp repo taxi csv files and convert them to parquet | Taxi csv.gz files | Parquet files |
+| `01_spark_to_parquet.py` | Convert processed data to parquet format | Taxi parquet files | Parquet files |
+| `02_upload_to_db.py` | Upload data directly to database | Data files | DuckDB or BigQuery |
+| `03_spark_to_db.py` | **Main pipeline** - reads taxi parquet files, aggregates revenue by zone/month, writes to DB | Parquet files (GCS or local) | DuckDB (dev) or BigQuery (prod) |
+| `duckdb_admin.py` | Database management utility | DuckDB file | Database operations |
+| `TEST_spark_*.py` | Connection and integration tests | GCP/DuckDB credentials | Test results |
+
+## Setup
+
+### 1. Docker Environment
+
+Build and start Spark cluster:
+
+```bash
+docker build -t zoomcamp-spark:latest .
+docker compose up -d
+```
+
+Verify Spark is running:
+```bash
+docker ps  # Should show spark-master and spark-worker containers
+```
+
+### 2. Configuration
+
+Copy the example env file and configure:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and update the following variables with your actual values:
-- `GCP_PROJECT_ID`: Your Google Cloud Project ID
-- `GCP_BUCKET`: Your GCS bucket name for temporary BigQuery data
-- Place your GCP service account key file in `gcp-key/application_default_credentials.json`
+Edit `.env` with your values (see below for details).
 
-### Use Docker to launch spark master and workers
-docker build -t zoomcamp-spark:lastest .
-docker compose build 
-docker compose up -d
+### 3. GCP Credentials
 
-### Command to execute spark script directly from parquet file to a parquet file
-
-**Environment Setup:**
-
-Linux/macOS:
-```bash
-export WORKSPACE="/opt/workspace"
-export DATALAKE_SOURCES = "${WORKSPACE}/datalake/raw/taxi"
-export DATAWAREHOUSE ="${WORKSPACE}/datawarehouse/parquet_report"
-export YEAR="2019"
+Place your GCP service account key at:
+```
+gcp-key/application_default_credentials.json
 ```
 
-Windows (PowerShell):
+## Environment Variables
+
+### For Development (DuckDB)
+
+```env
+ENV=dev
+DATALAKE_SOURCES=/opt/workspace/datalake/raw/taxi
+DB_PATH=/opt/workspace/datawarehouse/duckdb/taxi.duckdb
+DB_TABLE=revenue_zone_monthly
+DB_SCHEMA=reporting
+```
+
+### For Production (BigQuery)
+
+```env
+ENV=prod
+GOOGLE_APPLICATION_CREDENTIALS=/opt/workspace/gcp-key/application_default_credentials.json
+GCP_PROJECT_ID=your-project-id
+GCP_BUCKET=your-temp-bucket  # Temporary staging bucket for BigQuery connector
+GCP_DATASET=your_dataset
+DB_TABLE=revenue_zone_monthly
+DATALAKE_SOURCES=gs://your-bucket/raw/taxi  # Path to source parquet files
+```
+
+## Running the Pipeline
+
+### Development (DuckDB)
+
+**Windows (PowerShell):**
 ```powershell
-$env:WORKSPACE = "/opt/workspace"
-$env:DATALAKE_SOURCES = "${env:WORKSPACE}/datalake/raw/taxi"
-$env:DATAWAREHOUSE = "${env:WORKSPACE}/datawarehouse/parquet_report"
-$env:YEAR = "2019"
-```
+# Load environment variables from .env
+Get-Content .env | ForEach-Object {
+    $key, $value = $_ -split '='
+    [Environment]::SetEnvironmentVariable($key, $value)
+}
 
-Windows (CMD):
-```cmd
-set WORKSPACE=/opt/workspace
-set DATALAKE_SOURCES=%WORKSPACE%/datalake/raw/taxi
-set DATAWAREHOUSE=%WORKSPACE%/datawarehouse/parquet_report
-set YEAR=2019
-```
-
-**Run Spark Submit:**
-
-Linux/macOS:
-```bash
-docker exec -it spark-master /opt/spark/bin/spark-submit \
-  --master spark://spark-master:7077 \
-  /opt/workspace/spark_datalake.py \
-  --raw_sources $DATALAKE_SOURCES \
-  --output $DATAWAREHOUSE \
-  --year $YEAR
-```
-
-Windows (PowerShell):
-```powershell
-docker exec -it spark-master /opt/spark/bin/spark-submit `
+# Run pipeline for year 2019
+docker exec -it spark-master `
+  /opt/spark/bin/spark-submit `
   --master spark://spark-master:7077 `
-  /opt/workspace/spark_datalake.py `
-  --raw_sources $env:DATALAKE_SOURCES `
-  --output $env:DATAWAREHOUSE `
-  --year $env:YEAR
+  /opt/workspace/scripts/03_spark_to_db.py `
+  --year 2019
 ```
 
-Windows (CMD):
-```cmd
-docker exec -it spark-master /opt/spark/bin/spark-submit ^
-  --master spark://spark-master:7077 ^
-  /opt/workspace/spark_datalake.py ^
-  --raw_sources %DATALAKE_SOURCES% ^
-  --output %DATAWAREHOUSE% ^
-  --year %YEAR%
-```
-
-
-### Command to execute spark script from and into the a DB
-
-Windows (PowerShell):
+**With Debug Output:**
 ```powershell
 docker exec -it spark-master `
   /opt/spark/bin/spark-submit `
   --master spark://spark-master:7077 `
-  /opt/workspace/spark_to_db.py `
-  --year <year>
+  /opt/workspace/scripts/03_spark_to_db.py `
+  --year 2019 `
+  --debug
 ```
 
-If you hit `java.sql.SQLException: IO Error: Could not set lock on file ... Conflicting lock is held`, DuckDB is refusing concurrent writers on the same `.duckdb` file.
+### Production (BigQuery)
 
-Quick checks:
-- Ensure no other process is connected to the same DB file (`duckdb_admin.py`, DB client, another Spark run).
-- Re-run after the first job is fully stopped.
-- Keep Spark JDBC write serialized for DuckDB (the script now uses a single partition write).
+Same command, but ensure `.env` has `ENV=prod` and valid GCP credentials.
 
-Windows (PowerShell):
 ```powershell
 docker exec -it spark-master `
   /opt/spark/bin/spark-submit `
   --master spark://spark-master:7077 `
-  /opt/workspace/spark_to_db.py `
-  --year <year>
+  /opt/workspace/scripts/03_spark_to_db.py `
+  --year 2019
 ```
 
+## Troubleshooting
 
-## GCP
+### DuckDB Lock Error
+```
+java.sql.SQLException: IO Error: Could not set lock on file ... Conflicting lock is held
+```
 
-Use the Google Cloud Storage connector for Hadoop/Spark for high-performance
+**Solution:** DuckDB doesn't support concurrent writes. Ensure:
+- No other Spark jobs are running
+- No DuckDB client connections (`duckdb_admin.py`, DB viewer) are open
+- Wait for previous job to fully complete before restarting
+- Script uses single-partition write to minimize conflicts
 
+### BigQuery Cleanup Error
+```
+ERROR IntermediateDataCleaner: Failed to delete path gs://taxiny_tmp/...
+```
+
+**Solution:** Non-fatal. Temporary staging files couldn't be deleted due to GCS permissions. Your data was written successfully. Grant delete permissions on the temp bucket to the service account, or ignore if write succeeded.
+
+### Out of Memory
+
+Increase Spark memory in docker-compose.yaml:
+```yaml
+environment:
+  - SPARK_DRIVER_MEMORY=4g
+  - SPARK_EXECUTOR_MEMORY=4g
+```
+
+## Tests
+
+Run specific test files to validate your setup and connections:
+
+**Test GCP Connection:**
+```powershell
 docker exec -it spark-master `
   /opt/spark/bin/spark-submit `
   --master spark://spark-master:7077 `
-  /opt/workspace/spark_to_gcp.py `
-  --year <year>
+  /opt/workspace/scripts/TEST_spark_to_gcp_connection.py
+```
+
+**Test Spark to GCP Write:**
+```powershell
+docker exec -it spark-master `
+  /opt/spark/bin/spark-submit `
+  --master spark://spark-master:7077 `
+  /opt/workspace/scripts/TEST_spark_to_gcp.py
+```
+
+**Test Spark to DuckDB Write:**
+```powershell
+docker exec -it spark-master `
+  /opt/spark/bin/spark-submit `
+  --master spark://spark-master:7077 `
+  /opt/workspace/scripts/TEST_spark_duckdb.py
+```
